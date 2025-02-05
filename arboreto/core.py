@@ -11,6 +11,7 @@ from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor, E
 from dask import delayed
 from dask.dataframe import from_delayed
 from dask.dataframe.utils import make_meta
+import os.path as op
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +19,7 @@ DEMON_SEED = 666
 ANGEL_SEED = 777
 EARLY_STOP_WINDOW_LENGTH = 25
 DEFAULT_PERMUTATIONS = 1000
+DEFAULT_TMP_DIR = None
 
 SKLEARN_REGRESSOR_FACTORY = {
     'RF': RandomForestRegressor,
@@ -351,7 +353,8 @@ def infer_partial_network(regressor_type,
                           include_meta=False,
                           early_stop_window_length=EARLY_STOP_WINDOW_LENGTH,
                           seed=DEMON_SEED,
-                          n_permutations = DEFAULT_PERMUTATIONS):
+                          n_permutations = DEFAULT_PERMUTATIONS,
+                          output_directory = DEFAULT_TMP_DIR):
     """
     Ties together regressor model training with regulatory links and meta data extraction.
 
@@ -418,6 +421,13 @@ def infer_partial_network(regressor_type,
         fdr = fdr[['TF', 'counter']]
         fdr = pd.merge(links_df, fdr, left_on = 'TF', right_on='TF')
 
+        if output_directory is not None:
+
+            try:
+                fdr.to_feather(op.join(output_directory, f'{target_gene_name}.feather'))
+            except:
+                print('Failed to save file, continuing...')
+
 
         if include_meta:
             meta_df = to_meta_df(trained_regressor_df, target_gene_name)
@@ -482,7 +492,8 @@ def create_graph(expression_matrix,
                  early_stop_window_length=EARLY_STOP_WINDOW_LENGTH,
                  repartition_multiplier=1,
                  seed=DEMON_SEED,
-                 n_permutations = DEFAULT_PERMUTATIONS):
+                 n_permutations = DEFAULT_PERMUTATIONS,
+                 output_directory = DEFAULT_TMP_DIR):
     """
     Main API function. Create a Dask computation graph.
 
@@ -525,7 +536,7 @@ def create_graph(expression_matrix,
             delayed_link_df, delayed_meta_df = delayed(infer_partial_network, pure=True, nout=2)(
                 regressor_type, regressor_kwargs,
                 future_tf_matrix, future_tf_matrix_gene_names,
-                target_gene_name, target_gene_expression, include_meta, early_stop_window_length, seed, n_permutations)
+                target_gene_name, target_gene_expression, include_meta, early_stop_window_length, seed, n_permutations, output_directory)
 
             if delayed_link_df is not None:
                 delayed_link_dfs.append(delayed_link_df)
@@ -534,7 +545,7 @@ def create_graph(expression_matrix,
             delayed_link_df = delayed(infer_partial_network, pure=True)(
                 regressor_type, regressor_kwargs,
                 future_tf_matrix, future_tf_matrix_gene_names,
-                target_gene_name, target_gene_expression, include_meta, early_stop_window_length, seed, n_permutations)
+                target_gene_name, target_gene_expression, include_meta, early_stop_window_length, seed, n_permutations, output_directory)
 
             if delayed_link_df is not None:
                 delayed_link_dfs.append(delayed_link_df)
