@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 DEMON_SEED = 666
 ANGEL_SEED = 777
 EARLY_STOP_WINDOW_LENGTH = 25
+DEFAULT_PERMUTATIONS = 1000
 
 SKLEARN_REGRESSOR_FACTORY = {
     'RF': RandomForestRegressor,
@@ -278,6 +279,69 @@ def retry(fn, max_retries=10, warning_msg=None, fallback_result=None):
     return result
 
 
+# def infer_partial_network(regressor_type,
+#                           regressor_kwargs,
+#                           tf_matrix,
+#                           tf_matrix_gene_names,
+#                           target_gene_name,
+#                           target_gene_expression,
+#                           include_meta=False,
+#                           early_stop_window_length=EARLY_STOP_WINDOW_LENGTH,
+#                           seed=DEMON_SEED):
+#     """
+#     Ties together regressor model training with regulatory links and meta data extraction.
+
+#     :param regressor_type: string. Case insensitive.
+#     :param regressor_kwargs: dict of key-value pairs that configures the regressor.
+#     :param tf_matrix: numpy matrix. The feature matrix X to use for the regression.
+#     :param tf_matrix_gene_names: list of transcription factor names corresponding to the columns of the tf_matrix used to
+#                                  train the regression model.
+#     :param target_gene_name: the name of the target gene to infer the regulatory links for.
+#     :param target_gene_expression: the expression profile of the target gene. Numpy array.
+#     :param include_meta: whether to also return the meta information DataFrame.
+#     :param early_stop_window_length: window length of the early stopping monitor.
+#     :param seed: (optional) random seed for the regressors.
+#     :return: if include_meta == True, return links_df, meta_df
+
+#              link_df: a Pandas DataFrame['TF', 'target', 'importance'] containing inferred regulatory links and their
+#              connection strength.
+
+#              meta_df: a Pandas DataFrame['target', 'meta', 'value'] containing meta information regarding the trained
+#              regression model.
+#     """
+#     def fn():
+#         (clean_tf_matrix, clean_tf_matrix_gene_names) = clean(tf_matrix, tf_matrix_gene_names, target_gene_name)
+
+#         # special case in which only a single TF is passed and the target gene
+#         # here is the same as the TF (clean_tf_matrix is empty after cleaning):
+#         if clean_tf_matrix.size==0:
+#             raise ValueError("Cleaned TF matrix is empty, skipping inference of target {}.".format(target_gene_name))
+
+#         try:
+#             trained_regressor = fit_model(regressor_type, regressor_kwargs, clean_tf_matrix, target_gene_expression,
+#                                           early_stop_window_length, seed)
+#         except ValueError as e:
+#             raise ValueError("Regression for target gene {0} failed. Cause {1}.".format(target_gene_name, repr(e)))
+
+#         links_df = to_links_df(regressor_type, regressor_kwargs, trained_regressor, clean_tf_matrix_gene_names,
+#                                target_gene_name)
+
+#         if include_meta:
+#             meta_df = to_meta_df(trained_regressor, target_gene_name)
+
+#             return links_df, meta_df
+#         else:
+#             return links_df
+
+#     fallback_result = (_GRN_SCHEMA, _META_SCHEMA) if include_meta else _GRN_SCHEMA
+
+#     return retry(fn,
+#                  fallback_result=fallback_result,
+#                  warning_msg='WARNING: infer_data failed for target {0}'.format(target_gene_name))
+
+_GRN_SCHEMA = make_meta({'TF': str, 'target': str, 'importance': float, 'counter': int})
+_META_SCHEMA = make_meta({'target': str, 'n_estimators': int})
+
 def infer_partial_network(regressor_type,
                           regressor_kwargs,
                           tf_matrix,
@@ -286,7 +350,8 @@ def infer_partial_network(regressor_type,
                           target_gene_expression,
                           include_meta=False,
                           early_stop_window_length=EARLY_STOP_WINDOW_LENGTH,
-                          seed=DEMON_SEED):
+                          seed=DEMON_SEED,
+                          n_permutations = DEFAULT_PERMUTATIONS):
     """
     Ties together regressor model training with regulatory links and meta data extraction.
 
@@ -317,26 +382,55 @@ def infer_partial_network(regressor_type,
             raise ValueError("Cleaned TF matrix is empty, skipping inference of target {}.".format(target_gene_name))
 
         try:
-            trained_regressor = fit_model(regressor_type, regressor_kwargs, clean_tf_matrix, target_gene_expression,
-                                          early_stop_window_length, seed)
+            trained_regressor_df = fit_model(regressor_type, regressor_kwargs, clean_tf_matrix, target_gene_expression,
+                                            early_stop_window_length, seed)
         except ValueError as e:
-            raise ValueError("Regression for target gene {0} failed. Cause {1}.".format(target_gene_name, repr(e)))
+            raise ValueError("Initial Regression for target gene {0} failed. Cause {1}.".format(target_gene_name, repr(e)))
 
-        links_df = to_links_df(regressor_type, regressor_kwargs, trained_regressor, clean_tf_matrix_gene_names,
-                               target_gene_name)
+        links_df = to_links_df(regressor_type, regressor_kwargs, trained_regressor_df, clean_tf_matrix_gene_names,
+                                target_gene_name)
+
+        count = {}
+        for tf, importance in zip(links_df['TF'], links_df['importance']):
+            count[tf] = {'score': importance, 'counter': 0}
+
+        for _ in range(n_permutations):
+            exp = np.random.permutation(target_gene_expression)
+
+            try:
+                trained_regressor = fit_model(regressor_type, regressor_kwargs, clean_tf_matrix, exp,
+                                            early_stop_window_length, seed)
+            except ValueError as e:
+                raise ValueError("Regression for target gene {0} failed. Cause {1}.".format(target_gene_name, repr(e)))
+
+
+            links_df_dc = to_links_df(regressor_type, regressor_kwargs, trained_regressor, clean_tf_matrix_gene_names,
+                                target_gene_name)
+            
+            for tf, importance in zip(links_df_dc['TF'], links_df_dc['importance']):
+                if tf in count and importance >= count[tf]['score']:
+                    count[tf]['counter'] += 1
+
+
+        fdr = pd.DataFrame.from_dict(count).T
+        fdr = fdr.reset_index()
+        fdr.columns = ['TF', 'score', 'counter']
+        fdr = fdr[['TF', 'counter']]
+        fdr = pd.merge(links_df, fdr, left_on = 'TF', right_on='TF')
+
 
         if include_meta:
-            meta_df = to_meta_df(trained_regressor, target_gene_name)
+            meta_df = to_meta_df(trained_regressor_df, target_gene_name)
 
-            return links_df, meta_df
+            return fdr, meta_df
         else:
-            return links_df
+            return fdr
 
     fallback_result = (_GRN_SCHEMA, _META_SCHEMA) if include_meta else _GRN_SCHEMA
 
     return retry(fn,
-                 fallback_result=fallback_result,
-                 warning_msg='WARNING: infer_data failed for target {0}'.format(target_gene_name))
+                    fallback_result=fallback_result,
+                    warning_msg='WARNING: infer_data failed for target {0}'.format(target_gene_name))
 
 
 def target_gene_indices(gene_names,
@@ -373,8 +467,7 @@ def target_gene_indices(gene_names,
         raise ValueError("Unable to interpret target_genes.")
 
 
-_GRN_SCHEMA = make_meta({'TF': str, 'target': str, 'importance': float})
-_META_SCHEMA = make_meta({'target': str, 'n_estimators': int})
+
 
 
 def create_graph(expression_matrix,
@@ -388,7 +481,8 @@ def create_graph(expression_matrix,
                  include_meta=False,
                  early_stop_window_length=EARLY_STOP_WINDOW_LENGTH,
                  repartition_multiplier=1,
-                 seed=DEMON_SEED):
+                 seed=DEMON_SEED,
+                 n_permutations = DEFAULT_PERMUTATIONS):
     """
     Main API function. Create a Dask computation graph.
 
@@ -431,7 +525,7 @@ def create_graph(expression_matrix,
             delayed_link_df, delayed_meta_df = delayed(infer_partial_network, pure=True, nout=2)(
                 regressor_type, regressor_kwargs,
                 future_tf_matrix, future_tf_matrix_gene_names,
-                target_gene_name, target_gene_expression, include_meta, early_stop_window_length, seed)
+                target_gene_name, target_gene_expression, include_meta, early_stop_window_length, seed, n_permutations)
 
             if delayed_link_df is not None:
                 delayed_link_dfs.append(delayed_link_df)
@@ -440,7 +534,7 @@ def create_graph(expression_matrix,
             delayed_link_df = delayed(infer_partial_network, pure=True)(
                 regressor_type, regressor_kwargs,
                 future_tf_matrix, future_tf_matrix_gene_names,
-                target_gene_name, target_gene_expression, include_meta, early_stop_window_length, seed)
+                target_gene_name, target_gene_expression, include_meta, early_stop_window_length, seed, n_permutations)
 
             if delayed_link_df is not None:
                 delayed_link_dfs.append(delayed_link_df)

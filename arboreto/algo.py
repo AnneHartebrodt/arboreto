@@ -4,7 +4,7 @@ Top-level functions.
 
 import pandas as pd
 from distributed import Client, LocalCluster
-from arboreto.core import create_graph, SGBM_KWARGS, RF_KWARGS, EARLY_STOP_WINDOW_LENGTH
+from arboreto.core import create_graph, SGBM_KWARGS, RF_KWARGS, EARLY_STOP_WINDOW_LENGTH, DEFAULT_PERMUTATIONS
 
 
 def grnboost2(expression_data,
@@ -14,7 +14,8 @@ def grnboost2(expression_data,
               early_stop_window_length=EARLY_STOP_WINDOW_LENGTH,
               limit=None,
               seed=None,
-              verbose=False):
+              verbose=False,
+              n_permutations=DEFAULT_PERMUTATIONS):
     """
     Launch arboreto with [GRNBoost2] profile.
 
@@ -38,7 +39,7 @@ def grnboost2(expression_data,
 
     return diy(expression_data=expression_data, regressor_type='GBM', regressor_kwargs=SGBM_KWARGS,
                gene_names=gene_names, tf_names=tf_names, client_or_address=client_or_address,
-               early_stop_window_length=early_stop_window_length, limit=limit, seed=seed, verbose=verbose)
+               early_stop_window_length=early_stop_window_length, limit=limit, seed=seed, verbose=verbose, n_permutations=n_permutations)
 
 
 def genie3(expression_data,
@@ -82,7 +83,8 @@ def diy(expression_data,
         early_stop_window_length=EARLY_STOP_WINDOW_LENGTH,
         limit=None,
         seed=None,
-        verbose=False):
+        verbose=False,
+        n_permutations = DEFAULT_PERMUTATIONS):
     """
     :param expression_data: one of:
            * a pandas DataFrame (rows=observations, columns=genes)
@@ -125,7 +127,8 @@ def diy(expression_data,
                              regressor_kwargs=regressor_kwargs,
                              early_stop_window_length=early_stop_window_length,
                              limit=limit,
-                             seed=seed)
+                             seed=seed,
+                             n_permutations=n_permutations)
 
         if verbose:
             print('{} partitions'.format(graph.npartitions))
