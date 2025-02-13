@@ -4,7 +4,7 @@ Top-level functions.
 
 import pandas as pd
 from distributed import Client, LocalCluster
-from arboreto.core import create_graph, SGBM_KWARGS, RF_KWARGS, EARLY_STOP_WINDOW_LENGTH, DEFAULT_PERMUTATIONS, DEFAULT_TMP_DIR
+from arboreto.core import create_graph, SGBM_KWARGS, RF_KWARGS, EARLY_STOP_WINDOW_LENGTH, DEFAULT_PERMUTATIONS, DEFAULT_TMP_DIR, BOOTSTRAP_FDR_FRACTION
 import os.path as op
 import os
 
@@ -17,7 +17,8 @@ def grnboost2(expression_data,
               seed=None,
               verbose=False,
               n_permutations=DEFAULT_PERMUTATIONS,
-              output_directory = DEFAULT_TMP_DIR):
+              output_directory = DEFAULT_TMP_DIR,
+              bootstrap_fdr_fraction = BOOTSTRAP_FDR_FRACTION):
 
     """
     Launch arboreto with [GRNBoost2] profile.
@@ -42,7 +43,8 @@ def grnboost2(expression_data,
 
     return diy(expression_data=expression_data, regressor_type='GBM', regressor_kwargs=SGBM_KWARGS,
                gene_names=gene_names, tf_names=tf_names, client_or_address=client_or_address,
-               early_stop_window_length=early_stop_window_length, limit=limit, seed=seed, verbose=verbose, n_permutations=n_permutations, output_directory=output_directory)
+               early_stop_window_length=early_stop_window_length, limit=limit, seed=seed, verbose=verbose, n_permutations=n_permutations, 
+               output_directory=output_directory, bootstrap_fdr_fraction = bootstrap_fdr_fraction)
 
 
 def genie3(expression_data,
@@ -88,7 +90,8 @@ def diy(expression_data,
         seed=None,
         verbose=False,
         n_permutations = DEFAULT_PERMUTATIONS,
-        output_directory = DEFAULT_TMP_DIR):
+        output_directory = DEFAULT_TMP_DIR,
+        bootstrap_fdr_fraction = BOOTSTRAP_FDR_FRACTION):
     """
     :param expression_data: one of:
            * a pandas DataFrame (rows=observations, columns=genes)
@@ -140,7 +143,8 @@ def diy(expression_data,
                              limit=limit,
                              seed=seed,
                              n_permutations=n_permutations,
-                             output_directory = output_directory)
+                             output_directory = output_directory,
+                             bootstrap_fdr_fraction= bootstrap_fdr_fraction)
 
         if verbose:
             print('{} partitions'.format(graph.npartitions))

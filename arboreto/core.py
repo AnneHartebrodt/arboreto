@@ -20,6 +20,7 @@ ANGEL_SEED = 777
 EARLY_STOP_WINDOW_LENGTH = 25
 DEFAULT_PERMUTATIONS = 1000
 DEFAULT_TMP_DIR = None
+BOOTSTRAP_FDR_FRACTION = 1.0
 
 SKLEARN_REGRESSOR_FACTORY = {
     'RF': RandomForestRegressor,
@@ -135,6 +136,7 @@ def fit_model(regressor_type,
 
         with_early_stopping = is_oob_heuristic_supported(regressor_type, regressor_kwargs)
 
+    
         if with_early_stopping:
             regressor.fit(tf_matrix, target_gene_expression, monitor=EarlyStopMonitor(early_stop_window_length))
         else:
@@ -249,6 +251,7 @@ def clean(tf_matrix,
     return clean_tf_matrix, clean_tf_names
 
 
+
 def retry(fn, max_retries=10, warning_msg=None, fallback_result=None):
     """
     Minimalistic retry strategy to compensate for failures probably caused by a thread-safety bug in scikit-learn:
@@ -354,7 +357,8 @@ def infer_partial_network(regressor_type,
                           early_stop_window_length=EARLY_STOP_WINDOW_LENGTH,
                           seed=DEMON_SEED,
                           n_permutations = DEFAULT_PERMUTATIONS,
-                          output_directory = DEFAULT_TMP_DIR):
+                          output_directory = DEFAULT_TMP_DIR,
+                          bootstrap_fdr_fraction = BOOTSTRAP_FDR_FRACTION):
     """
     Ties together regressor model training with regulatory links and meta data extraction.
 
@@ -377,6 +381,8 @@ def infer_partial_network(regressor_type,
              regression model.
     """
     def fn():
+        rng = np.random.default_rng()
+
         (clean_tf_matrix, clean_tf_matrix_gene_names) = clean(tf_matrix, tf_matrix_gene_names, target_gene_name)
 
         # special case in which only a single TF is passed and the target gene
@@ -400,8 +406,16 @@ def infer_partial_network(regressor_type,
         for _ in range(n_permutations):
             exp = np.random.permutation(target_gene_expression)
 
+            if bootstrap_fdr_fraction<1.0:
+                boot = np.where(rng.uniform(size=clean_tf_matrix.shape[0])<=bootstrap_fdr_fraction)[0]
+                tf_matrix_subs = clean_tf_matrix[boot, :]
+                exp = exp[boot]
+
+            else:
+                tf_matrix_subs = clean_tf_matrix
+
             try:
-                trained_regressor = fit_model(regressor_type, regressor_kwargs, clean_tf_matrix, exp,
+                trained_regressor = fit_model(regressor_type, regressor_kwargs, tf_matrix_subs, exp,
                                             early_stop_window_length, seed)
             except ValueError as e:
                 raise ValueError("Regression for target gene {0} failed. Cause {1}.".format(target_gene_name, repr(e)))
@@ -493,7 +507,8 @@ def create_graph(expression_matrix,
                  repartition_multiplier=1,
                  seed=DEMON_SEED,
                  n_permutations = DEFAULT_PERMUTATIONS,
-                 output_directory = DEFAULT_TMP_DIR):
+                 output_directory = DEFAULT_TMP_DIR,
+                 bootstrap_fdr_fraction = BOOTSTRAP_FDR_FRACTION):
     """
     Main API function. Create a Dask computation graph.
 
@@ -536,7 +551,7 @@ def create_graph(expression_matrix,
             delayed_link_df, delayed_meta_df = delayed(infer_partial_network, pure=True, nout=2)(
                 regressor_type, regressor_kwargs,
                 future_tf_matrix, future_tf_matrix_gene_names,
-                target_gene_name, target_gene_expression, include_meta, early_stop_window_length, seed, n_permutations, output_directory)
+                target_gene_name, target_gene_expression, include_meta, early_stop_window_length, seed, n_permutations, output_directory, bootstrap_fdr_fraction)
 
             if delayed_link_df is not None:
                 delayed_link_dfs.append(delayed_link_df)
@@ -545,7 +560,7 @@ def create_graph(expression_matrix,
             delayed_link_df = delayed(infer_partial_network, pure=True)(
                 regressor_type, regressor_kwargs,
                 future_tf_matrix, future_tf_matrix_gene_names,
-                target_gene_name, target_gene_expression, include_meta, early_stop_window_length, seed, n_permutations, output_directory)
+                target_gene_name, target_gene_expression, include_meta, early_stop_window_length, seed, n_permutations, output_directory, bootstrap_fdr_fraction)
 
             if delayed_link_df is not None:
                 delayed_link_dfs.append(delayed_link_df)
